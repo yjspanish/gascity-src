@@ -247,6 +247,35 @@ ensure_database_registered() {
     return 1
 }
 
+# seed_issue_prefix writes the issue_prefix row into the scope's dolt config
+# table. bd >=1.0.3 rejects `bd config set issue_prefix` (immutable
+# post-init), and bd init in --server mode does not always populate the row
+# when the target database was pre-created. Without this row, every bd
+# create against the scope fails with "issue_prefix config is missing"
+# (including supervisor-internal order dispatch). See gascity-c3u.
+#
+# Inputs are pre-validated by valid_sql_name in op_init; we re-validate
+# defensively because this helper is reusable.
+seed_issue_prefix() {
+    local db="$1"
+    local prefix="$2"
+    if [ -z "$db" ] || [ -z "$prefix" ]; then
+        echo "warning: seed_issue_prefix called with empty db or prefix" >&2
+        return 1
+    fi
+    if ! valid_sql_name "$db" || ! valid_sql_name "$prefix"; then
+        echo "warning: seed_issue_prefix rejected non-identifier input db=$db prefix=$prefix" >&2
+        return 1
+    fi
+    local sql
+    sql="USE \`$db\`; INSERT INTO config (\`key\`, \`value\`) VALUES ('issue_prefix', '$prefix') ON DUPLICATE KEY UPDATE \`value\`='$prefix';"
+    local sql_err
+    if ! sql_err=$(server_sql "$sql" 2>&1 >/dev/null); then
+        echo "warning: failed to seed issue_prefix=$prefix into $db config table: $sql_err" >&2
+        return 1
+    fi
+    return 0
+}
 
 database_exists() {
     local db="$1"
@@ -1746,8 +1775,8 @@ op_init() {
             # and bd-specific bootstrap only.
             ensure_beads_dir_permissions "$dir"
             normalize_scope_after_init "$dir" "$prefix" "$dolt_database"
-            run_bd_pinned "$dir" config set issue_prefix "$prefix" 2>/dev/null || true
             run_bd_pinned "$dir" config set types.custom "$custom_types" 2>/dev/null || true
+            seed_issue_prefix "$dolt_database" "$prefix"
             backfill_project_id_if_missing "$dir"
             exit 0
         fi
@@ -1789,12 +1818,20 @@ op_init() {
     # bridge returns. Keep bd-specific config/migration here only.
     ensure_beads_dir_permissions "$dir"
 
-    # Keep bd's runtime config in sync with GC's canonical prefix. This is
-    # compatibility state for raw bd operations, not a second GC authority.
-    run_bd_pinned "$dir" config set issue_prefix "$prefix" 2>/dev/null || true
-
     # Configure custom bead types (required since beads v0.46.0).
+    # Run before seed_issue_prefix because `bd config set` lazily creates the
+    # `config` table when bd init --server installed schema in the orphan
+    # beads_<prefix> database (which we drop above). Without this priming
+    # call, the direct INSERT below errors with "table not found: config".
     run_bd_pinned "$dir" config set types.custom "$custom_types" 2>/dev/null || true
+
+    # Seed issue_prefix in the scope's dolt config table. bd >=1.0.3 rejects
+    # `bd config set issue_prefix` (immutable post-init), and bd init in
+    # --server mode does not always populate the row when the database was
+    # pre-created via ensure_database_registered. Without this row, every
+    # bd create against the scope dies with "issue_prefix config is missing",
+    # including supervisor-internal order dispatch. See gascity-c3u.
+    seed_issue_prefix "$dolt_database" "$prefix"
 
     # Ensure database has repository fingerprint (upstream GH #25).
     # Fresh bd init already writes project_id on current upstream; only pay the
