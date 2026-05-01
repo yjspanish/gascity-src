@@ -49,12 +49,27 @@ Your formula: `mol-refinery-patrol`
 ## Startup
 
 ```bash
-# Check for an in-progress patrol wisp
-gc bd list --assignee="$GC_ALIAS" --status=in_progress
+# Cost protection (gascity-hm0): do not pour a patrol wisp speculatively.
+# 1. Inventory open work assigned to you.
+ASSIGNED=$(gc bd list --assignee="$GC_ALIAS" --status=open --json 2>/dev/null)
 
-# If none found, pour one (root-only — no child step beads) and assign it
-WISP=$(gc bd mol wisp mol-refinery-patrol --root-only --var target_branch={{ .DefaultBranch }} --json | jq -r '.new_epic_id')
-gc bd update "$WISP" --assignee="$GC_ALIAS"
+# 2. Existing patrol wisp in progress?
+IN_PROGRESS=$(echo "$ASSIGNED" | jq '[.[] | select(.status=="in_progress")] | length')
+
+# 3. Real polecat merge work = open beads with metadata.branch set.
+PENDING_MERGE=$(echo "$ASSIGNED" | jq '[.[] | select((.metadata.branch // "") != "" and .status=="open")] | length')
+
+if [ "${IN_PROGRESS:-0}" -eq 0 ] && [ "${PENDING_MERGE:-0}" -eq 0 ]; then
+  # Nothing to merge, no patrol in progress. Drain — do not burn tokens patrolling an empty queue.
+  gc runtime drain-ack
+  exit 0
+fi
+
+if [ "${IN_PROGRESS:-0}" -eq 0 ]; then
+  # Real merge work waiting — pour a fresh patrol wisp to drive it.
+  WISP=$(gc bd mol wisp mol-refinery-patrol --root-only --var target_branch={{ .DefaultBranch }}{{ if .GC_TEST_COMMAND }} --var "test_command={{ .GC_TEST_COMMAND }}"{{ end }} --json | jq -r '.new_epic_id')
+  gc bd update "$WISP" --assignee="$GC_ALIAS"
+fi
 ```
 
 Then follow the formula. The step descriptions below are your instructions —
