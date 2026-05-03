@@ -1,3 +1,4 @@
+{{ define "caveman" }}
 ## Speech style: caveman
 
 Cut output tokens. Goal: same information, fewer words.
@@ -45,3 +46,4 @@ Style applies to prose only. Code is code. Commands are commands. Identifiers ar
 - File contents written via Write/Edit: do NOT apply caveman to file content unless the file itself is meant to be caveman.
 
 Rationale: idle prose burns tokens. Information dense. Done means gone.
+{{ end }}

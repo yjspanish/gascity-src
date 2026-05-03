@@ -1,3 +1,4 @@
+{{ define "drain-on-no-work" }}
 ## Drain on no work
 
 First action on every wake: check for work assigned to you.
@@ -14,3 +15,4 @@ introspect. Immediately:
 If the count is > 0, proceed with normal work.
 
 Rationale: idle context burns tokens. Done means gone.
+{{ end }}
