@@ -395,9 +395,85 @@ polecats, systemic issue).
 filed for stuck agents. Or no stuck polecats found."""
 
 [[steps]]
+id = "sample-recent-completions"
+title = "Sample recent polecat completions for friction + tier-mismatch"
+needs = ["check-polecat-health"]
+description = """
+QC-style sampling of recent polecat work, distinct from stuck-detection.
+This is pattern detection across many sessions, NOT per-session liveness.
+
+**Step 1: Find recent polecat session jsonls.**
+```bash
+RIG_NAME=$(echo $GC_AGENT | cut -d/ -f1)
+find /home/$USER/.claude/projects -name '*.jsonl' -mmin -60 \\
+  -path "*${RIG_NAME}*polecat*" 2>/dev/null | sort -t/ -k7 -r | head -10
+```
+Cap at 10 files. Each file is a recently-active polecat session in your rig.
+
+**Step 2: Load friction signatures.**
+```bash
+SIGS=/home/$USER/cities/$(basename $CityRoot)/witness/friction-signatures.json
+[ -f "$SIGS" ] || SIGS=$CityRoot/witness/friction-signatures.json
+jq -r '.signatures[] | "\\(.id)|\\(.regex)|\\(.min_occurrences)"' "$SIGS"
+```
+If file missing or invalid, fall back to defaults: gc-not-in-path, auth-401,
+missing-dep, tool-loop. Continue patrol — do not block on config drift.
+
+**Step 3: For each signature, count occurrences across the 10 files.**
+```bash
+# Per signature:
+COUNT=$(grep -c -E "<regex>" file1.jsonl file2.jsonl ... | awk -F: '{s+=$2} END{print s}')
+```
+Compare against signature's min_occurrences threshold.
+
+**Step 4: For each signature exceeding threshold, file or update a bead.**
+
+Dedup via search before creating:
+```bash
+EXISTING=$(gc bd search "Recurring friction: <id>" --status=open --json \\
+  | jq -r '.[0].id // empty')
+if [ -n "$EXISTING" ]; then
+  gc bd update "$EXISTING" --notes "Re-observed: count=$COUNT in last 60min"
+else
+  gc bd create --type=bug --priority=2 \\
+    --title="Recurring friction: <signature.id> (${COUNT}× in last hour)" \\
+    --description="Friction signature '<id>' matched ${COUNT}× across recent polecat
+sessions. Sample sessions: <list 3 paths>. Investigate root cause."
+fi
+```
+
+**Step 5: Tier-mismatch detection (only meaningful if tri-tier polecats live).**
+
+For each completed work bead in the window:
+```bash
+gc bd list --status=closed --updated-since=1h --json \\
+  | jq '.[] | select(.metadata."gc.routed_to" | test("polecat-[hso]"))'
+```
+
+Group by tier:
+- polecat-h beads CLOSED with rejection_reason set ≥2× → file
+  'tier-mismatch:upgrade' bead suggesting category needs polecat-s.
+- polecat-o beads CLOSED with no edits >50 lines and no test added ≥2× →
+  file 'tier-mismatch:downgrade' suggesting overuse of opus.
+
+Skip this step entirely if `bd list` shows no `polecat-h/-o` activity (single-tier setup).
+
+**Step 6: Log assessment.**
+
+One line per signature/tier-mismatch evaluation, even if no bead filed:
+'sampled N jsonls, sig=<id> count=<n> threshold=<t> action=<filed|deduped|skipped>'
+
+**Cost note:** This step uses regex + grep + jq only. No LLM-driven file
+reads. Should add <1% bar per witness wake.
+
+**Exit criteria:** All signatures evaluated. Any threshold-crossing
+patterns filed as beads (with dedup). Tier-mismatch beads filed if
+multi-tier polecats are present and pattern detected."""
+
+[[steps]]
 id = "next-iteration"
 title = "Pour next iteration and loop"
-needs = ["check-polecat-health"]
+needs = ["sample-recent-completions"]
 description = """
 **Config: event_timeout = {{event_timeout}}**
 
