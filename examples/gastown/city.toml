@@ -23,6 +23,11 @@
 name = "gastown"
 provider = "claude"
 global_fragments = ["command-glossary", "operational-awareness"]
+# Rigs registered via `gc rig add` inherit the gastown pack so per-rig
+# agents (witness, refinery, polecat) get stamped automatically. Without
+# this, `gc rig add` produces a rig with only control-dispatcher and
+# `gc sling <rig>/polecat` cannot dispatch.
+default_rig_includes = ["packs/gastown"]
 
 [imports.gastown]
 source = "packs/gastown"
