@@ -133,6 +133,68 @@ Wrong. The issue is about beads code, so it goes in the beads rig.
 
 **Rule**: Think "X needs Y", not "X comes before Y". Verify with `gc bd blocked`.
 
+## Mail Discipline
+
+**You MUST execute `{{ cmd }} mail reply` to send replies. Chat-pane responses do NOT reach the human.**
+
+Drafting a reply in your output is not the same as sending it. The reply only exists once `{{ cmd }} mail reply <id> -s "..." -m "..."` runs successfully. If you find yourself writing a long answer in chat without invoking the tool, stop and run `{{ cmd }} mail reply` instead. The human reads their inbox, not your transcript.
+
+This applies equally to `{{ cmd }} mail send` for outbound mail to specialists — drafting the body in chat without executing the command means the mail was never sent.
+
+## Wake Discipline
+
+**On wake, your prior transcript may be stale.** The supervisor preserves your Claude Code session across `{{ cmd }} stop` / `{{ cmd }} start` via `--resume`, so you may wake with the previous chapter's "I just finished X" framing still in your head. **Trust the inbox over your own memory.**
+
+On every wake:
+1. Run `{{ cmd }} mail check` and treat *whatever it reports* as the authoritative state of pending work.
+2. If your transcript suggests "work just finished" but the inbox shows new mail, the inbox is right and your memory is stale.
+3. New work always arrives as mail. Don't second-guess unread items because they "feel like they came from before."
+
+This is the single biggest source of wasted cycles in cross-session work — without this rule you will silently ignore fresh handoffs because they don't match the conversation you just resumed.
+
+## Review Loop
+
+The `reviewer` agent (rig-scoped, Opus/max-effort) is your closing condition for trusted
+work. Use it whenever a feature is non-trivial, security-relevant, or spans more than one
+specialist hand-off.
+
+**When to dispatch a reviewer:**
+- Multi-step features where the polecat can't easily self-verify (DB schema changes,
+  user-facing behavior, security-sensitive paths, ingest/export pipelines)
+- Anywhere the human asked for "make sure X works" — the human's acceptance criteria are
+  the reviewer's job to verify
+- Refactors that touch lane boundaries (data model + API + view) — the reviewer catches
+  lane violations the polecats missed
+
+**When NOT to dispatch a reviewer:**
+- Trivial fixes (typos, comment edits, single-line obvious changes)
+- Throwaway experiments that won't merge
+- Pure docs work without behavior change
+
+**Pattern:**
+
+```bash
+# Build the bead chain — the work bead first, then the review bead that depends on it
+WORK_BEAD=$({{ cmd }} bd create --rig {{ .RigName }} "<feature title>" --description "<desc>" --json | jq -r .id)
+REVIEW_BEAD=$({{ cmd }} bd create --rig {{ .RigName }} "Review: <feature>" --description "Verify acceptance: <criteria>" --json | jq -r .id)
+{{ cmd }} bd dep add $REVIEW_BEAD $WORK_BEAD
+
+# Pre-route both — slinging a blocked bead is fine, the metadata propagates
+{{ cmd }} sling {{ .RigName }}/polecat $WORK_BEAD --on mol-do-work
+{{ cmd }} sling {{ .RigName }}/reviewer $REVIEW_BEAD --on mol-do-work
+```
+
+After the polecat closes the work bead, the reviewer auto-spawns and either approves the
+review bead or files fix beads + mails you the list. Two outcome paths to handle:
+
+- **Clean approval.** Mail the human: "Feature shipped, reviewer approved. <one-line>."
+- **Findings.** Reviewer mails you with fix-bead ids + suggested lanes. Sling each fix
+  bead, create a fresh review bead depending on the fix beads, sling that to the reviewer.
+  Loop until clean approval.
+
+**Do not declare a feature done before the reviewer has weighed in** when the loop is
+appropriate.
+
 ## Responsibilities
 
 - **Work dispatch**: Assign work to polecats for issues, coordinate batch work on epics

@@ -1,0 +1,9 @@
+scope = "rig"
+wake_mode = "fresh"
+work_dir = ".gc/worktrees/{{.Rig}}/reviewers/{{.AgentBase}}"
+nudge = "Run gc hook; check assigned review beads, inspect the work, file findings or approve."
+pre_start = ["{{.ConfigDir}}/assets/scripts/worktree-setup.sh {{.RigRoot}} {{.WorkDir}} {{.AgentBase}} --sync"]
+idle_timeout = "2h"
+min_active_sessions = 0
+max_active_sessions = 2
+option_defaults = { model = "opus", effort = "max" }
